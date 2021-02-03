@@ -17,10 +17,11 @@ package engine
 import (
 	"context"
 	"fmt"
-	"github.com/hyperjumptech/grule-rule-engine/ast"
-	"github.com/hyperjumptech/grule-rule-engine/logger"
 	"sort"
 	"time"
+
+	"github.com/hyperjumptech/grule-rule-engine/ast"
+	"github.com/hyperjumptech/grule-rule-engine/logger"
 
 	"github.com/sirupsen/logrus"
 )
@@ -32,17 +33,24 @@ var (
 	})
 )
 
+const (
+	RunStrategyDefault = 0
+	RunStrategyOnce    = 1
+)
+
 // NewGruleEngine will create new instance of GruleEngine struct.
 // It will set the max cycle to 5000
 func NewGruleEngine() *GruleEngine {
 	return &GruleEngine{
-		MaxCycle: 5000,
+		MaxCycle:    5000,
+		RunStrategy: 0,
 	}
 }
 
 // GruleEngine is the engine structure. It has the Execute method to start the engine to work.
 type GruleEngine struct {
-	MaxCycle uint64
+	MaxCycle    uint64
+	RunStrategy uint64
 }
 
 // Execute function is the same as ExecuteWithContext(context.Background())
@@ -119,25 +127,16 @@ func (g *GruleEngine) ExecuteWithContext(ctx context.Context, dataCtx ast.IDataC
 				log.Error("Max cycle reached")
 				return fmt.Errorf("the GruleEngine successfully selected rule candidate for execution after %d cycles, this could possibly caused by rule entry(s) that keep added into execution pool but when executed it does not change any data in context. Please evaluate your rule entries \"When\" and \"Then\" scope. You can adjust the maximum cycle using GruleEngine.MaxCycle variable", g.MaxCycle)
 			}
-
-			// execute the top most prioritized rule
-			runner := runnable[0]
-
-			// scan all runnables and pick the highest salience
-			if len(runnable) > 1 {
-				for idx, pr := range runnable {
-					if idx > 0 && runner.Salience < pr.Salience {
-						runner = pr
-					}
-				}
-			}
-			// execute the top most prioritized rule
-			err := runner.Execute(dataCtx, knowledge.WorkingMemory)
-			if err != nil {
-				log.Errorf("Failed execution rule : %s. Got error %v", runner.RuleName, err)
+			// for Run Once strategy
+			if g.RunStrategy == RunStrategyOnce {
+				err := g.runOnceStrategy(runnable, dataCtx, knowledge)
 				return err
 			}
-
+			// Run default run strategy
+			err := g.runDefaultStrategy(runnable, dataCtx, knowledge)
+			if err != nil {
+				return err
+			}
 			if dataCtx.IsComplete() {
 				break
 			}
@@ -148,6 +147,52 @@ func (g *GruleEngine) ExecuteWithContext(ctx context.Context, dataCtx ast.IDataC
 		}
 	}
 	log.Debugf("Finished Rules execution. With knowledge base '%s' version %s. Total #%d cycles. Duration %d ms.", knowledge.Name, knowledge.Version, cycle, time.Now().Sub(startTime).Nanoseconds()/1e6)
+	return nil
+}
+
+func (g *GruleEngine) runDefaultStrategy(runnable []*ast.RuleEntry, dataCtx ast.IDataContext, knowledge *ast.KnowledgeBase) error {
+	// execute the top most prioritized rule
+	runner := runnable[0]
+	// scan all runnables and pick the highest salience
+	if len(runnable) > 1 {
+		for idx, pr := range runnable {
+			if idx > 0 && runner.Salience < pr.Salience {
+				runner = pr
+			}
+		}
+	}
+	// execute the top most prioritized rule
+	err := runner.Execute(dataCtx, knowledge.WorkingMemory)
+	if err != nil {
+		log.Errorf("Failed execution rule : %s. Got error %v", runner.RuleName, err)
+		return err
+	}
+	return nil
+}
+
+type RuleRunningArray []*ast.RuleEntry
+
+func (r RuleRunningArray) Len() int {
+	return len(r)
+}
+
+func (r RuleRunningArray) Swap(i, j int) {
+	r[i], r[j] = r[j], r[i]
+}
+
+func (r RuleRunningArray) Less(i, j int) bool {
+	return r[i].Salience > r[j].Salience // from big to small
+}
+
+func (g *GruleEngine) runOnceStrategy(runnable []*ast.RuleEntry, dataCtx ast.IDataContext, knowledge *ast.KnowledgeBase) error {
+	sort.Sort(RuleRunningArray(runnable))
+	for _, r := range runnable {
+		err := r.Execute(dataCtx, knowledge.WorkingMemory)
+		if err != nil {
+			log.Errorf("Failed execution rule : %s. Got error %v", r.RuleName, err)
+			return err
+		}
+	}
 	return nil
 }
 

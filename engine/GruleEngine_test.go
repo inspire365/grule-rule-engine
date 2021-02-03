@@ -17,14 +17,15 @@ package engine
 import (
 	"context"
 	"fmt"
-	"github.com/hyperjumptech/grule-rule-engine/ast"
-	"github.com/hyperjumptech/grule-rule-engine/builder"
-	"github.com/hyperjumptech/grule-rule-engine/pkg"
-	"github.com/stretchr/testify/assert"
 	"reflect"
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/hyperjumptech/grule-rule-engine/ast"
+	"github.com/hyperjumptech/grule-rule-engine/builder"
+	"github.com/hyperjumptech/grule-rule-engine/pkg"
+	"github.com/stretchr/testify/assert"
 )
 
 type Sorting struct {
@@ -559,6 +560,37 @@ func TestGruleEngine_FetchMatchingRules_Having_Diff_Salience(t *testing.T) {
 
 	//When
 	engine := NewGruleEngine()
+	ruleEntries, err := engine.FetchMatchingRules(dctx, kb)
+
+	//Then
+	assert.NoError(t, err)
+	assert.Equal(t, 4, len(ruleEntries))
+	assert.Equal(t, 8, ruleEntries[0].Salience)
+	assert.Equal(t, 7, ruleEntries[1].Salience)
+	assert.Equal(t, 6, ruleEntries[2].Salience)
+	assert.Equal(t, 5, ruleEntries[3].Salience)
+}
+
+func TestGruleEngine_RunOnce_FetchMatchingRules_Having_Diff_Salience(t *testing.T) {
+	//Given
+	fact := &Fact{
+		Distance: 6000,
+		Duration: 121,
+	}
+	dctx := ast.NewDataContext()
+	err := dctx.Add("Fact", fact)
+	assert.NoError(t, err)
+	lib := ast.NewKnowledgeLibrary()
+	rb := builder.NewRuleBuilder(lib)
+	err = rb.BuildRuleFromResource("conflict_rules_test", "0.1.1", pkg.NewBytesResource([]byte(duplicateRulesWithDiffSalience)))
+	assert.NoError(t, err)
+	kb := lib.NewKnowledgeBaseInstance("conflict_rules_test", "0.1.1")
+
+	//When
+	engine := &GruleEngine{
+		MaxCycle:    5000,
+		RunStrategy: 1,
+	}
 	ruleEntries, err := engine.FetchMatchingRules(dctx, kb)
 
 	//Then
